@@ -138,12 +138,30 @@ def draft_pr_body(analysis: dict) -> str:
 - [ ] Verify all modified files work as expected
 - [ ] Check for any breaking changes
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+Generated with [Claude Code](https://claude.com/claude-code)
 """
     return body
 
 
-def ensure_branch_pushed(branch_name: str) -> bool:
+def create_feature_branch() -> Optional[str]:
+    """Create a new feature branch with uncommitted changes."""
+    import datetime
+
+    # Generate branch name with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    branch_name = f"feature/pr-{timestamp}"
+
+    print(f"Creating new branch '{branch_name}'...")
+    result = run_command(f"git checkout -b {branch_name}")
+    # git checkout -b returns empty on success, but changes branch
+    current_branch = get_branch_name()
+    if current_branch == branch_name:
+        print(f"Created branch {branch_name}")
+        return branch_name
+    return None
+
+
+def ensure_branch_pushed(branch_name: str, auto_create: bool = True) -> bool:
     """Ensure branch is pushed to remote."""
     # Check if remote exists
     remote = run_command("git remote get-url origin")
@@ -225,7 +243,35 @@ def run_pr_agent():
     print(f"\n[4/5] Current branch: {branch_name}")
 
     if branch_name == "main" or branch_name == "master":
-        print("Warning: You're on main/master branch. Creating PR anyway.")
+        has_uncommitted = git_status["untracked"] or git_status["diff"] or git_status["staged"]
+
+        if has_uncommitted:
+            print("Warning: You're on main/master with uncommitted changes.")
+            print("Creating a feature branch and committing changes...")
+
+            # Create a new branch
+            new_branch = create_feature_branch()
+            if new_branch:
+                branch_name = new_branch
+
+                # Stage and commit changes
+                untracked = analysis.get("untracked_files", [])
+                modified = analysis.get("modified_files", [])
+                all_files = untracked + modified
+
+                # Filter to only include files that exist
+                existing_files = [f for f in all_files if os.path.exists(f)]
+
+                if existing_files:
+                    files_to_add = " ".join(existing_files)
+                    run_command(f"git add {files_to_add}")
+                    run_command(f'git commit -m "Add {len(existing_files)} file(s) via Claude PR Agent"')
+                    print("Changes committed.")
+            else:
+                print("Failed to create feature branch.")
+                return None
+        else:
+            print("Warning: You're on main/master branch. Creating PR anyway.")
 
     ensure_branch_pushed(branch_name)
 
