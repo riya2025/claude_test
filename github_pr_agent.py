@@ -93,6 +93,46 @@ def get_branch_name() -> str:
     return run_command("git rev-parse --abbrev-ref HEAD")
 
 
+def generate_commit_message(git_status: dict, existing_files: list, analysis: dict) -> str:
+    """Generate a descriptive commit message by analyzing the changes."""
+    untracked = git_status.get("untracked", "")
+    diff = git_status.get("diff", "")
+
+    # Check for specific patterns in changes
+    changes_lower = (untracked + diff).lower()
+
+    # Detect what type of changes were made
+    if "def " in diff or "class " in diff:
+        # Function/class changes
+        added_funcs = []
+        for line in diff.split("\n"):
+            if line.startswith("+") and "def " in line:
+                func_name = line.split("def ")[1].split("(")[0].strip()
+                added_funcs.append(func_name)
+
+        if added_funcs:
+            return f"Add {', '.join(added_funcs[:3])} function(s)"
+
+    if "import " in diff or "from " in diff:
+        return "Add new dependencies/imports"
+
+    if "def " in diff and "return" in diff:
+        return "Update function logic"
+
+    if ".md" in " ".join(existing_files).lower() or "readme" in " ".join(existing_files).lower():
+        return "Update documentation"
+
+    # Use file names + change type for default
+    change_type = analysis.get("change_type", "update")
+    file_count = len(existing_files)
+
+    if file_count == 1:
+        basename = os.path.splitext(os.path.basename(existing_files[0]))[0]
+        return f"{change_type.title()}: {basename}"
+    else:
+        return f"{change_type.title()}: {file_count} file(s)"
+
+
 def draft_pr_title(analysis: dict) -> str:
     """Draft PR title based on analysis."""
     files = analysis.get("modified_files", []) + analysis.get("untracked_files", [])
@@ -265,7 +305,10 @@ def run_pr_agent():
                 if existing_files:
                     files_to_add = " ".join(existing_files)
                     run_command(f"git add {files_to_add}")
-                    run_command(f'git commit -m "Add {len(existing_files)} file(s) via Claude PR Agent"')
+
+                    # Generate descriptive commit message by analyzing changes
+                    commit_msg = generate_commit_message(git_status, existing_files, analysis)
+                    run_command(f'git commit -m "{commit_msg}"')
                     print("Changes committed.")
             else:
                 print("Failed to create feature branch.")
